@@ -2,7 +2,7 @@
   "name": "realtime-chat",
   "version": "1.0.0",
   "description": "Responsive Socket.IO chat room",
-  "main": "/server.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
