@@ -1,85 +1,64 @@
-const joinScreen = document.getElementById("join-screen");
-const chatScreen = document.getElementById("chat-screen");
-const joinForm = document.getElementById("join-form");
-const messageForm = document.getElementById("message-form");
-const messagesEl = document.getElementById("messages");
-const usersEl = document.getElementById("users");
-const roomNameEl = document.getElementById("room-name");
-const chatRoomTitle = document.getElementById("chat-room-title");
-const messageInput = document.getElementById("message-input");
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const path = require("path");
 
-const socket = io();
-let currentRoom = "";
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-// === Join screen ===
-joinForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const username = document.getElementById("username").value.trim();
-  const room = document.getElementById("room").value.trim();
-  if (!username || !room) return;
-  currentRoom = room;
-  socket.emit("join", { username, room });
-  joinScreen.classList.add("hidden");
-  chatScreen.classList.remove("hidden");
-  roomNameEl.textContent = `Room: ${room}`;
-  chatRoomTitle.textContent = room;
-  messageInput.focus();
+// Serve static files from /public
+app.use(express.static(path.join(__dirname, "public")));
+
+// Maps room → { socketId: username }
+const rooms = new Map();
+
+io.on("connection", (socket) => {
+  socket.on("join", ({ username, room }) => {
+    // Create room map if needed, then store user
+    if (!rooms.has(room)) rooms.set(room, new Map());
+    const users = rooms.get(room);
+    users.set(socket.id, username);
+    socket.join(room);
+
+    // Welcome current user
+    socket.emit("system", `Welcome to ${room} room, ${username}! ✨`);
+
+    // Notify others & update list
+    socket.to(room).emit("system", `${username} joined the room.`);
+    io.to(room).emit("users", Array.from(users.values()));
+  });
+
+  socket.on("chat", ({ room, message }) => {
+    const username = rooms.get(room)?.get(socket.id) || "Anonymous";
+    io.to(room).emit("chat", {
+      username,
+      message,
+      time: new Date().toLocaleTimeString(),
+    });
+  });
+
+  socket.on("typing", ({ room, typing }) => {
+    const username = rooms.get(room)?.get(socket.id);
+    if (username) socket.to(room).emit("typing", { username, typing });
+  });
+
+  socket.on("disconnecting", () => {
+    // A socket can be in multiple rooms; iterate
+    socket.rooms.forEach((room) => {
+      if (rooms.has(room)) {
+        const users = rooms.get(room);
+        const username = users.get(socket.id);
+        users.delete(socket.id);
+        socket.to(room).emit("system", `${username} left the room.`);
+        io.to(room).emit("users", Array.from(users.values()));
+        if (users.size === 0) rooms.delete(room); // tidy
+      }
+    });
+  });
 });
 
-// === Chat events ===
-socket.on("system", (text) => addMessage(text, "system"));
-
-socket.on("chat", ({ username, message, time }) => {
-  const me = username === document.getElementById("username").value.trim();
-  addMessage(`${username} • ${time}<br>${message}`, me ? "me" : "other");
-});
-
-socket.on("users", (userList) => {
-  usersEl.innerHTML = userList.map((u) => `<li>${u}</li>`).join("");
-});
-
-socket.on("typing", ({ username, typing }) => {
-  const typingId = "typing-" + username;
-  if (typing) {
-    if (!document.getElementById(typingId)) {
-      const li = document.createElement("li");
-      li.id = typingId;
-      li.className = "system";
-      li.textContent = `${username} is typing…`;
-      messagesEl.appendChild(li);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-  } else {
-    const el = document.getElementById(typingId);
-    if (el) el.remove();
-  }
-});
-
-// Send message
-messageForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const msg = messageInput.value.trim();
-  if (!msg) return;
-  socket.emit("chat", { room: currentRoom, message: msg });
-  messageInput.value = "";
-  messageInput.focus();
-});
-
-// Typing indicator
-let typingTimeout;
-messageInput.addEventListener("input", () => {
-  socket.emit("typing", { room: currentRoom, typing: true });
-  clearTimeout(typingTimeout);
-  typingTimeout = setTimeout(() => {
-    socket.emit("typing", { room: currentRoom, typing: false });
-  }, 1000);
-});
-
-// Helpers
-function addMessage(html, cls = "") {
-  const li = document.createElement("li");
-  li.innerHTML = html;
-  if (cls) li.classList.add(cls);
-  messagesEl.appendChild(li);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () =>
+  console.log(`⚡ Server listening on http://localhost:${PORT}`),
+);
