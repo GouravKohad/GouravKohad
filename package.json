@@ -4,7 +4,7 @@
   "description": "Responsive Socket.IO chat room",
   "main": "server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
